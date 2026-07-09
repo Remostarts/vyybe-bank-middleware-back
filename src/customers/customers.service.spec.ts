@@ -47,7 +47,13 @@ describe('CustomersService.onboard', () => {
     const svc = new CustomersService(repo, blnk, accounts);
     const result = await svc.onboard(dto);
     expect(blnk.createIdentity).toHaveBeenCalledWith(
-      expect.objectContaining({ identity_type: 'individual', first_name: 'Ada', email_address: 'ada@x.com' }),
+      // Blnk parses dob with Go's RFC3339 layout, so a bare date is rejected
+      expect.objectContaining({
+        identity_type: 'individual',
+        first_name: 'Ada',
+        email_address: 'ada@x.com',
+        dob: '2004-01-01T00:00:00Z',
+      }),
     );
     expect(accounts.ensureActiveAccount).toHaveBeenCalled();
     expect(result.customer.status).toBe('ACTIVE');

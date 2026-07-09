@@ -107,7 +107,7 @@ export class CustomersService {
       last_name: customer.lastName,
       email_address: customer.email,
       phone_number: customer.phoneNumber,
-      dob: customer.dateOfBirth,
+      dob: toRfc3339Date(customer.dateOfBirth),
       meta_data: { external_user_id: customer.externalUserId, kyc_tier: customer.kycTier ?? 0, ...(metadata ?? {}) },
     };
   }
@@ -116,4 +116,10 @@ export class CustomersService {
     const accounts = await this.accounts.findByCustomerId(customer.id);
     return { customer: toCustomerDto(customer), accounts: accounts.map(toAccountDto) };
   }
+}
+
+/** Blnk parses dob with Go's RFC3339 layout; a bare YYYY-MM-DD is rejected. */
+function toRfc3339Date(date: string | Date): string {
+  const day = date instanceof Date ? date.toISOString().slice(0, 10) : date.slice(0, 10);
+  return `${day}T00:00:00Z`;
 }
