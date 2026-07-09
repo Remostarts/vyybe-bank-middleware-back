@@ -1,0 +1,14 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: vyybe
+      POSTGRES_PASSWORD: vyybe
+      POSTGRES_DB: vyybe_corebanking
+    ports:
+      - "5434:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
+volumes:
+  db-data:
