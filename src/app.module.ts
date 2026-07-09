@@ -5,6 +5,9 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { loadConfig } from './config/configuration';
 import { HealthModule } from './health/health.module';
 import { ApiKeyGuard } from './auth/api-key.guard';
+import { LedgerModule } from './ledger/ledger.module';
+import { CustomersModule } from './customers/customers.module';
+import { AccountsModule } from './accounts/accounts.module';
 
 @Module({
   imports: [
@@ -19,6 +22,9 @@ import { ApiKeyGuard } from './auth/api-key.guard';
       }),
     }),
     HealthModule,
+    LedgerModule,
+    CustomersModule,
+    AccountsModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ApiKeyGuard }],
 })
