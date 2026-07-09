@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Headers, HttpCode, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { ApiSecurity } from '@nestjs/swagger';
 import { CustomersService } from './customers.service';
-import { OnboardCustomerDto } from './dto';
+import { OnboardCustomerDto, SetKycTierDto } from './dto';
 import { IdempotencyService } from '../idempotency/idempotency.service';
+import { AccountsService, toAccountDto } from '../accounts/accounts.service';
 
 @ApiSecurity('x-api-key')
 @Controller('customers')
@@ -10,6 +11,7 @@ export class CustomersController {
   constructor(
     private readonly customers: CustomersService,
     private readonly idempotency: IdempotencyService,
+    private readonly accounts: AccountsService,
   ) {}
 
   @Post()
@@ -26,5 +28,19 @@ export class CustomersController {
   @Get(':id')
   getById(@Param('id', ParseUUIDPipe) id: string) {
     return this.customers.getById(id);
+  }
+
+  @Patch(':id/kyc-tier')
+  setKycTier(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SetKycTierDto) {
+    return this.customers.setKycTier(id, dto.kycTier);
+  }
+
+  @Post(':id/accounts')
+  @HttpCode(201)
+  createAccount(@Param('id', ParseUUIDPipe) id: string, @Headers('idempotency-key') idemKey?: string) {
+    return this.idempotency.execute(idemKey, `POST /v1/customers/${id}/accounts`, { id }, async () => {
+      const customer = await this.customers.findEntity(id);
+      return toAccountDto(await this.accounts.createAdditionalAccount(customer));
+    });
   }
 }

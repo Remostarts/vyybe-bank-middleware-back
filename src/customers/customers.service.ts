@@ -74,6 +74,16 @@ export class CustomersService {
     }
   }
 
+  async setKycTier(id: string, kycTier: number): Promise<CustomerDto> {
+    let customer = await this.findEntity(id);
+    customer.kycTier = kycTier;
+    customer = await this.repo.save(customer);
+    if (customer.blnkIdentityId) {
+      await this.blnk.updateIdentity(customer.blnkIdentityId, this.identityRequest(customer));
+    }
+    return toCustomerDto(customer);
+  }
+
   async findEntity(id: string): Promise<Customer> {
     const customer = await this.repo.findOneBy({ id });
     if (!customer) throw new AppError('CUSTOMER_NOT_FOUND', 'Customer not found', 404, { id });
