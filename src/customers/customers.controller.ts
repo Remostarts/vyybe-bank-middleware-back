@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Headers, HttpCode, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { ApiSecurity } from '@nestjs/swagger';
 import { CustomersService } from './customers.service';
-import { OnboardCustomerDto, SetKycTierDto } from './dto';
+import { OnboardCustomerDto, SetKycTierDto } from './customers.dto';
 import { IdempotencyService } from '../idempotency/idempotency.service';
 import { AccountsService, toAccountDto } from '../accounts/accounts.service';
 

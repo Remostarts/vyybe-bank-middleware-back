@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Customer } from './customer.entity';
-import { CustomerDto, OnboardCustomerDto, toCustomerDto } from './dto';
+import { CustomerDto, OnboardCustomerDto, toCustomerDto } from './customers.dto';
 import { BlnkClient } from '../blnk/blnk.client';
 import { AccountsService, AccountDto, toAccountDto } from '../accounts/accounts.service';
 import { AppError } from '../common/errors';
