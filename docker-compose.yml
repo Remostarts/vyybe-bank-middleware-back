@@ -9,6 +9,82 @@ services:
       - "5434:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vyybe"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  blnk-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: blnk
+      POSTGRES_PASSWORD: blnk
+      POSTGRES_DB: blnk
+    volumes:
+      - blnk-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U blnk"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  blnk-redis:
+    image: redis:7.2.4
+
+  typesense:
+    image: typesense/typesense:29.0
+    command: ["--data-dir", "/data", "--api-key=blnk-api-key", "--listen-port", "8108"]
+    volumes:
+      - typesense-data:/data
+
+  blnk:
+    image: jerryenebeli/blnk:0.15.0
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "blnk migrate up && blnk start"
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./blnk/blnk.json:/blnk.json
+    depends_on:
+      blnk-postgres:
+        condition: service_healthy
+      blnk-redis:
+        condition: service_started
+      typesense:
+        condition: service_started
+    restart: on-failure
+
+  blnk-worker:
+    image: jerryenebeli/blnk:0.15.0
+    entrypoint: ["blnk", "workers"]
+    volumes:
+      - ./blnk/blnk.json:/blnk.json
+    depends_on:
+      blnk:
+        condition: service_started
+    restart: on-failure
+
+  middleware:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      DATABASE_URL: postgres://vyybe:vyybe@db:5432/vyybe_corebanking
+      BLNK_BASE_URL: http://blnk:5001
+      BLNK_API_KEY: vyybe-blnk-dev-key
+      SERVICE_API_KEYS: user-service:dev-key-user-service
+      VAN_PREFIX: "99"
+    depends_on:
+      db:
+        condition: service_healthy
+      blnk:
+        condition: service_started
+    restart: on-failure
 
 volumes:
   db-data:
+  blnk-db-data:
+  typesense-data:
