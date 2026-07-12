@@ -112,7 +112,7 @@ export class AccountsService {
   private async activate(account: Account, blnkIdentityId: string): Promise<Account> {
     if (!account.blnkBalanceId) {
       const balance = await this.blnk.createBalance(
-        this.ledgers.getLedgerId('CUSTOMER_MAIN'),
+        await this.ledgers.resolveLedgerId('CUSTOMER_MAIN'),
         blnkIdentityId,
         account.currency,
       );

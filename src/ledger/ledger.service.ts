@@ -23,7 +23,15 @@ export class LedgerService implements OnApplicationBootstrap {
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
-    await this.ensureLedgers();
+    try {
+      await this.ensureLedgers();
+    } catch (err) {
+      this.logger.warn(
+        `Deferred ledger bootstrap: Blnk not reachable at startup (${
+          err instanceof Error ? err.message : String(err)
+        }). Will retry lazily on first use.`,
+      );
+    }
   }
 
   async ensureLedgers(): Promise<void> {
@@ -41,6 +49,15 @@ export class LedgerService implements OnApplicationBootstrap {
   }
 
   getLedgerId(key: LedgerKey): string {
+    const id = this.cache.get(key);
+    if (!id) throw new AppError('INTERNAL', `Ledger not bootstrapped: ${key}`, 500);
+    return id;
+  }
+
+  async resolveLedgerId(key: LedgerKey): Promise<string> {
+    const cached = this.cache.get(key);
+    if (cached) return cached;
+    await this.ensureLedgers();
     const id = this.cache.get(key);
     if (!id) throw new AppError('INTERNAL', `Ledger not bootstrapped: ${key}`, 500);
     return id;
