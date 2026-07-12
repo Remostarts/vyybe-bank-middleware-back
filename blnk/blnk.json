@@ -1,0 +1,8 @@
+{
+  "project_name": "VyyBe",
+  "data_source": { "dns": "postgres://blnk:blnk@blnk-postgres:5432/blnk?sslmode=disable" },
+  "redis": { "dns": "blnk-redis:6379" },
+  "typesense": { "dns": "http://typesense:8108" },
+  "type_sense_key": "blnk-api-key",
+  "server": { "port": "5001", "secure": true, "secret_key": "vyybe-blnk-dev-key" }
+}
