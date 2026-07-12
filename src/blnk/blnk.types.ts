@@ -28,3 +28,23 @@ export interface BlnkBalance {
   ledger_id: string;
   identity_id?: string;
 }
+
+export interface CreateBlnkTransactionRequest {
+  precise_amount: number;
+  currency: string;
+  precision: number;
+  reference: string;
+  source: string;
+  destination: string;
+  description?: string;
+  inflight?: boolean;
+  skip_queue?: boolean;
+  allow_overdraft?: boolean;
+  meta_data?: Record<string, unknown>;
+}
+
+export interface BlnkTransaction {
+  transaction_id: string;
+  status: string;
+  reference: string;
+}
