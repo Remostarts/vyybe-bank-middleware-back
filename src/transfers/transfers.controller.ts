@@ -15,7 +15,7 @@ export class TransfersController {
   @Post('transfers')
   @HttpCode(201)
   create(@Body() dto: CreateTransferDto, @Headers('idempotency-key') idemKey?: string) {
-    return this.idempotency.execute(idemKey, 'POST /v1/transfers', dto, () => this.transfers.createTransfer(dto));
+    return this.idempotency.execute(idemKey, 'POST /v1/transfers', dto, (ctx) => this.transfers.createTransfer(dto, ctx));
   }
 
   @Post('transfers/:id/commit')
@@ -47,6 +47,6 @@ export class TransfersController {
   @Post('deposits')
   @HttpCode(201)
   deposit(@Body() dto: CreateDepositDto, @Headers('idempotency-key') idemKey?: string) {
-    return this.idempotency.execute(idemKey, 'POST /v1/deposits', dto, () => this.transfers.deposit(dto));
+    return this.idempotency.execute(idemKey, 'POST /v1/deposits', dto, (ctx) => this.transfers.deposit(dto, ctx));
   }
 }

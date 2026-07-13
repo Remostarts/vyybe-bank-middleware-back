@@ -9,7 +9,10 @@ import { BlnkTransaction } from '../blnk/blnk.types';
 import { LimitsService } from './limits.service';
 import { InternalAccountsService } from '../ledger/internal-accounts.service';
 import { AppError } from '../common/errors';
+import { IdempotencyContext } from '../idempotency/idempotency.service';
 import { CreateDepositDto, CreateTransferDto, HistoryItemDto, TransferDto, toTransferDto } from './transfers.dto';
+
+const FINAL_STATUSES: readonly TransferStatus[] = ['APPLIED', 'REJECTED', 'COMMITTED', 'VOIDED', 'FAILED'];
 
 interface ExecuteOptions {
   source: string;
@@ -34,7 +37,19 @@ export class TransfersService {
     private readonly internals: InternalAccountsService,
   ) {}
 
-  async createTransfer(dto: CreateTransferDto): Promise<TransferDto> {
+  async createTransfer(dto: CreateTransferDto, ctx?: IdempotencyContext): Promise<TransferDto> {
+    const resumed = await this.resumeCheckpoint(ctx, async () => {
+      const from = await this.resolveActiveAccount(dto.fromAccountId, dto.fromAccountNumber, 'from');
+      const to = await this.resolveActiveAccount(dto.toAccountId, dto.toAccountNumber, 'to');
+      return {
+        source: from.blnkBalanceId as string,
+        destination: to.blnkBalanceId as string,
+        inflight: dto.hold === true,
+        allowOverdraft: false,
+      };
+    });
+    if (resumed) return resumed;
+
     const from = await this.resolveActiveAccount(dto.fromAccountId, dto.fromAccountNumber, 'from');
     const to = await this.resolveActiveAccount(dto.toAccountId, dto.toAccountNumber, 'to');
     if (from.id === to.id) {
@@ -60,6 +75,7 @@ export class TransfersService {
         metadata: dto.metadata ?? null,
       }),
     );
+    await ctx?.saveCheckpoint({ transferId: transfer.id });
     return this.execute(transfer, {
       source: from.blnkBalanceId as string,
       destination: to.blnkBalanceId as string,
@@ -68,7 +84,14 @@ export class TransfersService {
     });
   }
 
-  async deposit(dto: CreateDepositDto): Promise<TransferDto> {
+  async deposit(dto: CreateDepositDto, ctx?: IdempotencyContext): Promise<TransferDto> {
+    const resumed = await this.resumeCheckpoint(ctx, async () => {
+      const to = await this.resolveActiveAccount(dto.toAccountId, dto.toAccountNumber, 'to');
+      const suspense = await this.internals.resolveBalanceId('DEPOSIT_SUSPENSE');
+      return { source: suspense, destination: to.blnkBalanceId as string, inflight: false, allowOverdraft: true };
+    });
+    if (resumed) return resumed;
+
     const to = await this.resolveActiveAccount(dto.toAccountId, dto.toAccountNumber, 'to');
     const suspense = await this.internals.resolveBalanceId('DEPOSIT_SUSPENSE');
 
@@ -87,12 +110,63 @@ export class TransfersService {
         metadata: dto.metadata ?? null,
       }),
     );
+    await ctx?.saveCheckpoint({ transferId: transfer.id });
     return this.execute(transfer, {
       source: suspense,
       destination: to.blnkBalanceId as string,
       inflight: false,
       allowOverdraft: true,
     });
+  }
+
+  /**
+   * Idempotent-retry resume: if the idempotency context carries a checkpointed transferId,
+   * recover the outcome of that in-flight attempt instead of minting a new Blnk reference.
+   * Returns null when there is nothing to resume (fresh key or checkpoint row not found).
+   */
+  private async resumeCheckpoint(
+    ctx: IdempotencyContext | undefined,
+    resolveOpts: () => Promise<ExecuteOptions>,
+  ): Promise<TransferDto | null> {
+    const cp = ctx?.checkpoint;
+    const transferId =
+      cp && typeof cp === 'object' && typeof (cp as { transferId?: unknown }).transferId === 'string'
+        ? (cp as { transferId: string }).transferId
+        : null;
+    if (!transferId) return null;
+
+    const row = await this.repo.findOneBy({ id: transferId });
+    if (!row) return null; // checkpoint row missing (shouldn't happen) — fall through to fresh path
+
+    if (FINAL_STATUSES.includes(row.status)) {
+      if (row.status === 'REJECTED') {
+        throw new AppError('INSUFFICIENT_FUNDS', 'Insufficient funds in the source account', 422, { transferId: row.id });
+      }
+      return toTransferDto(row);
+    }
+
+    if (row.status === 'INFLIGHT' && row.blnkTransactionId) {
+      // Hold already created; caller commits/voids separately.
+      return toTransferDto(row);
+    }
+
+    // PENDING, or INFLIGHT with no blnkTransactionId: the earlier attempt's outcome is unknown.
+    // Ask Blnk by reference first.
+    const tx = await this.blnk.getTransactionByReference(row.id);
+    if (tx) {
+      row.blnkTransactionId = tx.transaction_id;
+      row.status = mapBlnkStatus(tx.status);
+      const saved = await this.repo.save(row);
+      if (saved.status === 'REJECTED') {
+        throw new AppError('INSUFFICIENT_FUNDS', 'Insufficient funds in the source account', 422, { transferId: saved.id });
+      }
+      return toTransferDto(saved);
+    }
+
+    // Blnk has no record of this reference: safely re-run the Blnk call for the SAME row.
+    // The reference is unchanged, so Blnk dedupes and this can never double-move money.
+    const opts = await resolveOpts();
+    return this.execute(row, opts);
   }
 
   async commit(id: string): Promise<TransferDto> {

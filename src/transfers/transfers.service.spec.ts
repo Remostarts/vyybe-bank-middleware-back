@@ -16,7 +16,7 @@ function makeDeps() {
     create: jest.fn((v) => ({ ...v })),
     save: jest.fn(async (v: Partial<Transfer>) => ({ id: v.id ?? 'tr-1', createdAt: new Date(), ...v })),
     findOneBy: jest.fn(),
-  } as unknown as Repository<Transfer> & { save: jest.Mock };
+  } as unknown as Repository<Transfer> & { save: jest.Mock; findOneBy: jest.Mock; create: jest.Mock };
   const accountRepo = {
     findOneBy: jest.fn(async (w: any) =>
       [accA, accB].find((a) => a.id === w.id || a.virtualAccountNumber === w.virtualAccountNumber) ?? null),
@@ -26,7 +26,9 @@ function makeDeps() {
   } as unknown as Repository<Customer>;
   const blnk = {
     createTransaction: jest.fn().mockResolvedValue({ transaction_id: 'txn_1', status: 'APPLIED', reference: 'tr-1' }),
-  } as unknown as BlnkClient & { createTransaction: jest.Mock };
+    getTransactionByReference: jest.fn().mockResolvedValue(null),
+    updateInflight: jest.fn().mockResolvedValue({ transaction_id: 'txn_1', status: 'COMMITTED', reference: 'tr-1' }),
+  } as unknown as BlnkClient & { createTransaction: jest.Mock; getTransactionByReference: jest.Mock; updateInflight: jest.Mock };
   const limits = { assertWithinLimits: jest.fn().mockResolvedValue(undefined) } as unknown as LimitsService & { [k: string]: jest.Mock };
   const internals = { resolveBalanceId: jest.fn().mockResolvedValue('bln_susp') } as unknown as InternalAccountsService;
   return { transferRepo, accountRepo, customerRepo, blnk, limits, internals };
@@ -105,6 +107,59 @@ describe('TransfersService.createTransfer', () => {
     const { svc, d } = makeService();
     d.blnk.createTransaction.mockResolvedValue({ transaction_id: 'txn_1', status: 'REJECTED', reference: 'tr-1' });
     await expect(svc.createTransfer(dto)).rejects.toMatchObject({ code: 'INSUFFICIENT_FUNDS' });
+  });
+});
+
+describe('TransfersService.createTransfer idempotent resume', () => {
+  const dto = { fromAccountId: 'acc-a', toAccountId: 'acc-b', amount: 25000 };
+  const pendingRow = () => ({
+    id: 'tr-1',
+    type: 'P2P',
+    status: 'PENDING',
+    blnkTransactionId: null,
+    amount: 25000,
+    currency: 'NGN',
+    fromAccountId: 'acc-a',
+    toAccountId: 'acc-b',
+    narration: null,
+    metadata: null,
+    createdAt: new Date(),
+  });
+
+  it('adopts an APPLIED Blnk outcome for a checkpointed PENDING row without creating a new transaction', async () => {
+    const { svc, d } = makeService();
+    d.transferRepo.findOneBy.mockResolvedValue(pendingRow());
+    d.blnk.getTransactionByReference.mockResolvedValue({ transaction_id: 'txn_9', status: 'APPLIED', reference: 'tr-1' });
+    const ctx = { checkpoint: { transferId: 'tr-1' }, saveCheckpoint: jest.fn() };
+    const result = await svc.createTransfer(dto, ctx as any);
+    expect(d.blnk.createTransaction).not.toHaveBeenCalled();
+    expect(d.transferRepo.save).toHaveBeenCalledWith(expect.objectContaining({ id: 'tr-1', status: 'APPLIED', blnkTransactionId: 'txn_9' }));
+    expect(result.status).toBe('APPLIED');
+  });
+
+  it('re-runs the Blnk call with the original reference when Blnk has no record, creating no new row', async () => {
+    const { svc, d } = makeService();
+    d.transferRepo.findOneBy.mockResolvedValue(pendingRow());
+    d.blnk.getTransactionByReference.mockResolvedValue(null);
+    d.transferRepo.create.mockClear();
+    const ctx = { checkpoint: { transferId: 'tr-1' }, saveCheckpoint: jest.fn() };
+    const result = await svc.createTransfer(dto, ctx as any);
+    expect(d.blnk.createTransaction).toHaveBeenCalledWith(expect.objectContaining({ reference: 'tr-1' }));
+    expect(d.transferRepo.create).not.toHaveBeenCalled();
+    expect(result.status).toBe('APPLIED');
+  });
+
+  it('calls saveCheckpoint with the inserted row id before the Blnk transaction on a fresh call', async () => {
+    const { svc, d } = makeService();
+    const order: string[] = [];
+    const ctx = { checkpoint: null, saveCheckpoint: jest.fn(async () => { order.push('checkpoint'); }) };
+    d.blnk.createTransaction.mockImplementation(async () => {
+      order.push('blnk');
+      return { transaction_id: 'txn_1', status: 'APPLIED', reference: 'tr-1' };
+    });
+    await svc.createTransfer(dto, ctx as any);
+    expect(ctx.saveCheckpoint).toHaveBeenCalledWith({ transferId: 'tr-1' });
+    expect(order).toEqual(['checkpoint', 'blnk']);
   });
 });
 
