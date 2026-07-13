@@ -1,7 +1,8 @@
 import { Controller, Get, Param } from '@nestjs/common';
-import { ApiSecurity } from '@nestjs/swagger';
+import { ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { AccountsService } from './accounts.service';
 
+@ApiTags('Accounts')
 @ApiSecurity('x-api-key')
 @Controller('accounts')
 export class AccountsController {
