@@ -167,7 +167,9 @@ export class TransfersService {
         reference: transfer.id,
         source: opts.source,
         destination: opts.destination,
-        description: transfer.narration ?? undefined,
+        // Blnk rejects transactions with a blank description, so always send a
+        // non-empty value even when the caller didn't supply a narration.
+        description: transfer.narration ?? `${transfer.type} ${transfer.id}`,
         inflight: opts.inflight,
         skip_queue: true,
         allow_overdraft: opts.allowOverdraft,
