@@ -8,6 +8,7 @@ import { ApiKeyGuard } from './auth/api-key.guard';
 import { LedgerModule } from './ledger/ledger.module';
 import { CustomersModule } from './customers/customers.module';
 import { AccountsModule } from './accounts/accounts.module';
+import { TransfersModule } from './transfers/transfers.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { AccountsModule } from './accounts/accounts.module';
     LedgerModule,
     CustomersModule,
     AccountsModule,
+    TransfersModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ApiKeyGuard }],
 })
