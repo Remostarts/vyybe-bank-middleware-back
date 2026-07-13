@@ -163,6 +163,80 @@ describe('TransfersService.createTransfer idempotent resume', () => {
   });
 });
 
+describe('TransfersService commit/void adoption of ambiguous Blnk state', () => {
+  const inflightRow = () => ({
+    id: 'tr-1',
+    type: 'P2P',
+    status: 'INFLIGHT',
+    blnkTransactionId: 'txn_1',
+    amount: 25000,
+    currency: 'NGN',
+    fromAccountId: 'acc-a',
+    toAccountId: 'acc-b',
+    narration: null,
+    metadata: null,
+    createdAt: new Date(),
+  });
+  const rejection = (marker: string) =>
+    new AppError('BLNK_REQUEST_REJECTED', 'Blnk rejected the request (409)', 422, {
+      blnkStatus: 409,
+      blnkBody: { error: `${marker}: transaction already finalized` },
+    });
+
+  it('commit on an already-committed hold adopts COMMITTED and resolves', async () => {
+    const { svc, d } = makeService();
+    d.transferRepo.findOneBy.mockResolvedValue(inflightRow());
+    d.blnk.updateInflight.mockRejectedValue(rejection('TXN_ALREADY_COMMITTED'));
+    const result = await svc.commit('tr-1');
+    expect(result.status).toBe('COMMITTED');
+    expect(d.transferRepo.save).toHaveBeenCalledWith(expect.objectContaining({ id: 'tr-1', status: 'COMMITTED' }));
+  });
+
+  it('void on an already-committed hold adopts COMMITTED then throws INVALID_TRANSFER_STATE', async () => {
+    const { svc, d } = makeService();
+    d.transferRepo.findOneBy.mockResolvedValue(inflightRow());
+    d.blnk.updateInflight.mockRejectedValue(rejection('TXN_ALREADY_COMMITTED'));
+    await expect(svc.void_('tr-1')).rejects.toMatchObject({
+      code: 'INVALID_TRANSFER_STATE',
+      status: 409,
+      details: expect.objectContaining({ id: 'tr-1', status: 'COMMITTED' }),
+    });
+    expect(d.transferRepo.save).toHaveBeenCalledWith(expect.objectContaining({ status: 'COMMITTED' }));
+  });
+
+  it('void on an already-voided hold adopts VOIDED and resolves', async () => {
+    const { svc, d } = makeService();
+    d.transferRepo.findOneBy.mockResolvedValue(inflightRow());
+    d.blnk.updateInflight.mockRejectedValue(rejection('TXN_ALREADY_VOIDED'));
+    const result = await svc.void_('tr-1');
+    expect(result.status).toBe('VOIDED');
+    expect(d.transferRepo.save).toHaveBeenCalledWith(expect.objectContaining({ status: 'VOIDED' }));
+  });
+
+  it('commit on an already-voided hold adopts VOIDED then throws INVALID_TRANSFER_STATE', async () => {
+    const { svc, d } = makeService();
+    d.transferRepo.findOneBy.mockResolvedValue(inflightRow());
+    d.blnk.updateInflight.mockRejectedValue(rejection('TXN_ALREADY_VOIDED'));
+    await expect(svc.commit('tr-1')).rejects.toMatchObject({
+      code: 'INVALID_TRANSFER_STATE',
+      status: 409,
+      details: expect.objectContaining({ id: 'tr-1', status: 'VOIDED' }),
+    });
+  });
+
+  it('rethrows an unrelated Blnk rejection unchanged', async () => {
+    const { svc, d } = makeService();
+    d.transferRepo.findOneBy.mockResolvedValue(inflightRow());
+    d.blnk.updateInflight.mockRejectedValue(
+      new AppError('BLNK_REQUEST_REJECTED', 'Blnk rejected the request (400)', 422, {
+        blnkStatus: 400,
+        blnkBody: { error: 'validation failed' },
+      }),
+    );
+    await expect(svc.commit('tr-1')).rejects.toMatchObject({ code: 'BLNK_REQUEST_REJECTED' });
+  });
+});
+
 describe('TransfersService.deposit', () => {
   it('sources from suspense with allow_overdraft and no limit check', async () => {
     const { svc, d } = makeService();

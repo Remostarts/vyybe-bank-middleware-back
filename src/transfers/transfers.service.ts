@@ -292,9 +292,32 @@ export class TransfersService {
     if (transfer.status !== 'INFLIGHT' || !transfer.blnkTransactionId) {
       throw new AppError('INVALID_TRANSFER_STATE', `Transfer is ${transfer.status}, expected INFLIGHT`, 409, { id, status: transfer.status });
     }
-    await this.blnk.updateInflight(transfer.blnkTransactionId, action);
+    try {
+      await this.blnk.updateInflight(transfer.blnkTransactionId, action);
+    } catch (e) {
+      // Ambiguous retry: Blnk rejects a repeated commit/void with a 409 whose body names the
+      // already-reached terminal state. Adopt that truth so retries converge on the real status.
+      if (e instanceof AppError && e.code === 'BLNK_REQUEST_REJECTED') {
+        const body = JSON.stringify(e.details?.blnkBody ?? '');
+        if (body.includes('TXN_ALREADY_COMMITTED')) {
+          return this.adoptTerminalState(transfer, 'COMMITTED', action === 'commit');
+        }
+        if (body.includes('TXN_ALREADY_VOIDED')) {
+          return this.adoptTerminalState(transfer, 'VOIDED', action === 'void');
+        }
+      }
+      throw e;
+    }
     transfer.status = target;
     return toTransferDto(await this.repo.save(transfer));
+  }
+
+  /** Persist the true terminal state Blnk reported; succeed if it matches the request, else 409. */
+  private async adoptTerminalState(transfer: Transfer, actual: TransferStatus, requestSatisfied: boolean): Promise<TransferDto> {
+    transfer.status = actual;
+    const saved = await this.repo.save(transfer);
+    if (requestSatisfied) return toTransferDto(saved);
+    throw new AppError('INVALID_TRANSFER_STATE', `Transfer is ${actual}`, 409, { id: saved.id, status: actual });
   }
 
   private async resync(transfer: Transfer): Promise<Transfer> {
