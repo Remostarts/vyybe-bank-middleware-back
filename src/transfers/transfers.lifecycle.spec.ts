@@ -169,4 +169,26 @@ describe('history', () => {
     const { svc } = makeHistoryService([]);
     await expect(svc.history('acc-a', 25, 'not-a-cursor')).rejects.toMatchObject({ code: 'VALIDATION_ERROR', status: 400 });
   });
+
+  it('rejects a cursor whose date part is not an ISO timestamp', async () => {
+    const { svc } = makeHistoryService([]);
+    const cursor = Buffer.from('1|550e8400-e29b-41d4-a716-446655440000').toString('base64url');
+    await expect(svc.history('acc-a', 25, cursor)).rejects.toMatchObject({ code: 'VALIDATION_ERROR', status: 400 });
+  });
+
+  it('rejects a cursor whose id part is not a uuid', async () => {
+    const { svc } = makeHistoryService([]);
+    const cursor = Buffer.from('2026-07-01T10:00:00.000Z|not-a-uuid').toString('base64url');
+    await expect(svc.history('acc-a', 25, cursor)).rejects.toMatchObject({ code: 'VALIDATION_ERROR', status: 400 });
+  });
+
+  it('accepts a well-formed cursor and applies the keyset predicate', async () => {
+    const { svc, qb } = makeHistoryService([]);
+    const cursor = Buffer.from('2026-07-01T10:00:00.000Z|550e8400-e29b-41d4-a716-446655440000').toString('base64url');
+    await svc.history('acc-a', 25, cursor);
+    expect(qb.andWhere).toHaveBeenCalledWith(
+      '(t.created_at, t.id) < (:cAt, :cId)',
+      expect.objectContaining({ cId: '550e8400-e29b-41d4-a716-446655440000', cAt: '2026-07-01T10:00:00.000Z' }),
+    );
+  });
 });

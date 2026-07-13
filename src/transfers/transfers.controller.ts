@@ -41,7 +41,7 @@ export class TransfersController {
     @Query('limit', new DefaultValuePipe(25), ParseIntPipe) limit: number,
     @Query('cursor') cursor?: string,
   ) {
-    return this.transfers.history(id, Math.min(limit, 100), cursor);
+    return this.transfers.history(id, Math.min(Math.max(limit, 1), 100), cursor);
   }
 
   @Post('deposits')

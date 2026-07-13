@@ -193,7 +193,9 @@ export class TransfersService {
       .take(limit + 1);
     if (cursor) {
       const [createdAt, cid] = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
-      if (!createdAt || !cid || Number.isNaN(Date.parse(createdAt))) {
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/;
+      if (!createdAt || !cid || !ISO_RE.test(createdAt) || !UUID_RE.test(cid) || Number.isNaN(Date.parse(createdAt))) {
         throw new AppError('VALIDATION_ERROR', 'Malformed cursor', 400);
       }
       qb.andWhere('(t.created_at, t.id) < (:cAt, :cId)', { cAt: createdAt, cId: cid });
