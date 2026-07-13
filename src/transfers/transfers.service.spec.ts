@@ -16,7 +16,7 @@ function makeDeps() {
     create: jest.fn((v) => ({ ...v })),
     save: jest.fn(async (v: Partial<Transfer>) => ({ id: v.id ?? 'tr-1', createdAt: new Date(), ...v })),
     findOneBy: jest.fn(),
-  } as unknown as Repository<Transfer> & { [k: string]: jest.Mock };
+  } as unknown as Repository<Transfer> & { save: jest.Mock };
   const accountRepo = {
     findOneBy: jest.fn(async (w: any) =>
       [accA, accB].find((a) => a.id === w.id || a.virtualAccountNumber === w.virtualAccountNumber) ?? null),
@@ -77,6 +77,17 @@ describe('TransfersService.createTransfer', () => {
     d.blnk.createTransaction.mockRejectedValue(new AppError('BLNK_UNAVAILABLE', 'Blnk is unreachable', 502));
     await expect(svc.createTransfer(dto)).rejects.toMatchObject({ code: 'TRANSFER_STATUS_UNKNOWN', status: 502, details: expect.objectContaining({ transferId: 'tr-1' }) });
     expect(d.transferRepo.save).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'PENDING' }));
+  });
+
+  it('throws TRANSFER_STATUS_UNKNOWN when the finalize save fails after Blnk applied the transaction', async () => {
+    const { svc, d } = makeService();
+    d.transferRepo.save
+      .mockImplementationOnce(async (v: Partial<Transfer>) => ({ id: v.id ?? 'tr-1', createdAt: new Date(), ...v }))
+      .mockRejectedValueOnce(new Error('db down'));
+    await expect(svc.createTransfer(dto)).rejects.toMatchObject({
+      code: 'TRANSFER_STATUS_UNKNOWN', status: 502, details: expect.objectContaining({ transferId: 'tr-1' }),
+    });
+    expect(d.blnk.createTransaction).toHaveBeenCalled();
   });
 
   it('a REJECTED status in a 2xx Blnk response also maps to INSUFFICIENT_FUNDS', async () => {

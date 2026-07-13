@@ -5,6 +5,7 @@ import { Transfer, TransferStatus } from './transfer.entity';
 import { Account } from '../accounts/account.entity';
 import { Customer } from '../customers/customer.entity';
 import { BlnkClient } from '../blnk/blnk.client';
+import { BlnkTransaction } from '../blnk/blnk.types';
 import { LimitsService } from './limits.service';
 import { InternalAccountsService } from '../ledger/internal-accounts.service';
 import { AppError } from '../common/errors';
@@ -94,8 +95,9 @@ export class TransfersService {
 
   /** Shared Blnk execution with checkpointed outcome handling. */
   private async execute(transfer: Transfer, opts: ExecuteOptions): Promise<TransferDto> {
+    let tx: BlnkTransaction;
     try {
-      const tx = await this.blnk.createTransaction({
+      tx = await this.blnk.createTransaction({
         precise_amount: transfer.amount,
         currency: transfer.currency,
         precision: 100,
@@ -108,13 +110,6 @@ export class TransfersService {
         allow_overdraft: opts.allowOverdraft,
         meta_data: transfer.metadata ?? undefined,
       });
-      transfer.blnkTransactionId = tx.transaction_id;
-      transfer.status = mapBlnkStatus(tx.status);
-      const saved = await this.repo.save(transfer);
-      if (saved.status === 'REJECTED') {
-        throw new AppError('INSUFFICIENT_FUNDS', 'Insufficient funds in the source account', 422, { transferId: saved.id });
-      }
-      return toTransferDto(saved);
     } catch (e) {
       if (e instanceof AppError && e.code === 'BLNK_REQUEST_REJECTED') {
         transfer.status = 'REJECTED';
@@ -131,6 +126,24 @@ export class TransfersService {
         });
       }
       throw e;
+    }
+
+    // Finalize: Blnk has settled the outcome, so any failure here (e.g. transient DB
+    // error) must not surface raw — money may already have moved. Row stays PENDING;
+    // the resync path recovers it from Blnk by reference.
+    try {
+      transfer.blnkTransactionId = tx.transaction_id;
+      transfer.status = mapBlnkStatus(tx.status);
+      const saved = await this.repo.save(transfer);
+      if (saved.status === 'REJECTED') {
+        throw new AppError('INSUFFICIENT_FUNDS', 'Insufficient funds in the source account', 422, { transferId: saved.id });
+      }
+      return toTransferDto(saved);
+    } catch (e) {
+      if (e instanceof AppError && e.code === 'INSUFFICIENT_FUNDS') throw e;
+      throw new AppError('TRANSFER_STATUS_UNKNOWN', 'Transfer outcome unknown; poll GET /v1/transfers/{id}', 502, {
+        transferId: transfer.id,
+      });
     }
   }
 
