@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppError } from '../common/errors';
-import { BlnkBalance, BlnkIdentity, BlnkLedger, CreateBlnkIdentityRequest } from './blnk.types';
+import { BlnkBalance, BlnkIdentity, BlnkLedger, BlnkTransaction, CreateBlnkIdentityRequest, CreateBlnkTransactionRequest } from './blnk.types';
 
 const TIMEOUT_MS = 5_000;
 const GET_MAX_ATTEMPTS = 3; // 1 try + 2 retries
@@ -39,6 +39,27 @@ export class BlnkClient {
 
   getBalance(balanceId: string): Promise<BlnkBalance> {
     return this.request<BlnkBalance>('GET', `/balances/${balanceId}`);
+  }
+
+  createTransaction(req: CreateBlnkTransactionRequest): Promise<BlnkTransaction> {
+    return this.request<BlnkTransaction>('POST', '/transactions', req);
+  }
+
+  updateInflight(transactionId: string, status: 'commit' | 'void'): Promise<BlnkTransaction> {
+    return this.request<BlnkTransaction>('PUT', `/transactions/inflight/${transactionId}`, { status });
+  }
+
+  async getTransactionByReference(reference: string): Promise<BlnkTransaction | null> {
+    try {
+      return await this.request<BlnkTransaction>('GET', `/transactions/reference/${reference}`);
+    } catch (e) {
+      if (e instanceof AppError && e.code === 'BLNK_REQUEST_REJECTED' && e.details?.blnkStatus === 404) return null;
+      throw e;
+    }
+  }
+
+  createInternalBalance(ledgerId: string, currency: string): Promise<BlnkBalance> {
+    return this.request<BlnkBalance>('POST', '/balances', { ledger_id: ledgerId, currency });
   }
 
   /** Reachability probe: any HTTP response counts as reachable. */

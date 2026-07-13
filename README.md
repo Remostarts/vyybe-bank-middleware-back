@@ -28,11 +28,21 @@ Interactive docs: http://localhost:3000/docs
 | POST | /v1/customers/:id/accounts | Additional account |
 | GET | /v1/accounts/:id | Account + live balance (kobo, precision 100) |
 | GET | /v1/accounts/by-account-number/:van | Same, by account number |
+| POST | /v1/transfers | P2P transfer (optional `hold: true` for inflight) |
+| POST | /v1/transfers/:id/commit | Commit an inflight transfer |
+| POST | /v1/transfers/:id/void | Void an inflight transfer |
+| GET | /v1/transfers/:id | Transfer status (re-syncs unknown outcomes from Blnk) |
+| GET | /v1/accounts/:id/transactions | Paginated history (IN/OUT, counterparty) |
+| POST | /v1/deposits | Fund an account from the deposit suspense |
 | GET | /health, /health/ready | Liveness / readiness |
 
 Failed onboarding returns `502 ONBOARDING_INCOMPLETE`; retry with the SAME
 `Idempotency-Key` — the flow resumes from its checkpoint and never duplicates
 Blnk records.
+
+Transfers enforce per-tier limits (`tier_limits` table, editable in DB) and
+return `422 LIMIT_EXCEEDED` / `422 INSUFFICIENT_FUNDS`; a
+`502 TRANSFER_STATUS_UNKNOWN` means poll `GET /v1/transfers/:id`.
 
 ## Development
 

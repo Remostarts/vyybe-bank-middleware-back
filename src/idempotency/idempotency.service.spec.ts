@@ -65,6 +65,43 @@ describe('IdempotencyService', () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
+  it('passes checkpoint=null to fn on the first run', async () => {
+    const repo = makeRepo(null);
+    const svc = new IdempotencyService(repo);
+    let seen: unknown = 'unset';
+    await svc.execute('k1', 'e', payload, async (ctx) => {
+      seen = ctx.checkpoint;
+      return 1;
+    });
+    expect(seen).toBeNull();
+  });
+
+  it('saveCheckpoint persists the value via repo.update', async () => {
+    const repo = makeRepo(null);
+    const svc = new IdempotencyService(repo);
+    await svc.execute('k1', 'e', payload, async (ctx) => {
+      await ctx.saveCheckpoint({ transferId: 'tr-1' });
+      return 1;
+    });
+    expect(repo.update).toHaveBeenCalledWith({ key: 'k1' }, { checkpoint: { transferId: 'tr-1' } });
+  });
+
+  it('surfaces the stored checkpoint to fn when re-executing after a failed attempt', async () => {
+    const repo = makeRepo({
+      key: 'k1',
+      requestHash: IdempotencyService.hash(payload),
+      responseBody: null,
+      checkpoint: { transferId: 'tr-1' },
+    });
+    const svc = new IdempotencyService(repo);
+    let seen: unknown;
+    await svc.execute('k1', 'e', payload, async (ctx) => {
+      seen = ctx.checkpoint;
+      return 1;
+    });
+    expect(seen).toEqual({ transferId: 'tr-1' });
+  });
+
   it('propagates fn failures without storing a response', async () => {
     const repo = makeRepo(null);
     const svc = new IdempotencyService(repo);

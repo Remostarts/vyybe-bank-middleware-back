@@ -7,7 +7,7 @@ import { LedgerService } from '../ledger/ledger.service';
 import { Customer } from '../customers/customer.entity';
 
 const config = { get: (k: string) => ({ vanPrefix: '99' })[k as 'vanPrefix'] } as unknown as ConfigService;
-const ledgers = { getLedgerId: jest.fn().mockReturnValue('ldg_1') } as unknown as LedgerService;
+const ledgers = { getLedgerId: jest.fn().mockReturnValue('ldg_1'), resolveLedgerId: jest.fn().mockResolvedValue('ldg_1') } as unknown as LedgerService;
 
 const customer = {
   id: 'cus-1',

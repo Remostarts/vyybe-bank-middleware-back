@@ -17,6 +17,9 @@ export class IdempotencyKey {
   @Column({ name: 'response_body', type: 'jsonb', nullable: true })
   responseBody: unknown | null;
 
+  @Column({ type: 'jsonb', nullable: true })
+  checkpoint: unknown | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 }

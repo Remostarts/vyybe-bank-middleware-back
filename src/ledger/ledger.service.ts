@@ -7,6 +7,7 @@ import { AppError } from '../common/errors';
 
 export const LEDGER_DEFS = [
   { key: 'CUSTOMER_MAIN', name: 'Customer Main Accounts', currency: 'NGN' },
+  { key: 'INTERNAL', name: 'Internal Accounts', currency: 'NGN' },
 ] as const;
 
 export type LedgerKey = (typeof LEDGER_DEFS)[number]['key'];
