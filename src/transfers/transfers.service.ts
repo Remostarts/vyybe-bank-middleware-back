@@ -119,6 +119,9 @@ export class TransfersService {
       .take(limit + 1);
     if (cursor) {
       const [createdAt, cid] = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
+      if (!createdAt || !cid || Number.isNaN(Date.parse(createdAt))) {
+        throw new AppError('VALIDATION_ERROR', 'Malformed cursor', 400);
+      }
       qb.andWhere('(t.created_at, t.id) < (:cAt, :cId)', { cAt: createdAt, cId: cid });
     }
     const rows = await qb.getMany();

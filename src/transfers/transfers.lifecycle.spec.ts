@@ -91,3 +91,82 @@ describe('getById re-sync', () => {
     expect(repo.save).not.toHaveBeenCalled();
   });
 });
+
+describe('history', () => {
+  function makeHistoryService(rows: Partial<Transfer>[], counterparties: Partial<Account>[] = []) {
+    const qb: any = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue(rows),
+    };
+    const repo = { createQueryBuilder: jest.fn(() => qb) } as unknown as Repository<Transfer>;
+    const accountRepo = { findBy: jest.fn().mockResolvedValue(counterparties) } as unknown as Repository<Account> & {
+      findBy: jest.Mock;
+    };
+    const svc = new TransfersService(
+      repo,
+      accountRepo,
+      {} as Repository<Customer>,
+      {} as BlnkClient,
+      {} as LimitsService,
+      {} as InternalAccountsService,
+    );
+    return { svc, qb, accountRepo };
+  }
+
+  const t0 = new Date('2026-07-01T10:00:00.000Z');
+  const t1 = new Date('2026-07-01T09:00:00.000Z');
+
+  const p2pIn: Partial<Transfer> = {
+    id: 'tr-10', type: 'P2P', status: 'APPLIED', amount: 5000, currency: 'NGN',
+    fromAccountId: 'acc-b', toAccountId: 'acc-a', narration: 'lunch', createdAt: t0,
+  };
+  const depositIn: Partial<Transfer> = {
+    id: 'tr-11', type: 'DEPOSIT', status: 'APPLIED', amount: 20000, currency: 'NGN',
+    fromAccountId: null, toAccountId: 'acc-a', narration: null, createdAt: t1,
+  };
+
+  it('maps direction and counterparty for P2P and deposit rows', async () => {
+    const { svc, accountRepo } = makeHistoryService(
+      [p2pIn, depositIn],
+      [{ id: 'acc-b', customerId: 'cus-b', virtualAccountNumber: '1234567890' }],
+    );
+    const { items, nextCursor } = await svc.history('acc-a', 25);
+    expect(items).toHaveLength(2);
+    expect(items[0]).toEqual({
+      id: 'tr-10',
+      direction: 'IN',
+      counterparty: { customerId: 'cus-b', accountNumber: '1234567890' },
+      amount: 5000,
+      currency: 'NGN',
+      status: 'APPLIED',
+      narration: 'lunch',
+      createdAt: t0,
+    });
+    expect(items[1]).toMatchObject({ id: 'tr-11', direction: 'IN', counterparty: null, amount: 20000 });
+    expect(accountRepo.findBy).toHaveBeenCalledTimes(1);
+    expect(nextCursor).toBeNull();
+  });
+
+  it('returns a nextCursor encoding the last page row when more rows exist', async () => {
+    const { svc } = makeHistoryService([p2pIn, depositIn]);
+    const { items, nextCursor } = await svc.history('acc-a', 1);
+    expect(items).toHaveLength(1);
+    expect(nextCursor).not.toBeNull();
+    expect(Buffer.from(nextCursor as string, 'base64url').toString('utf8')).toBe(`${t0.toISOString()}|tr-10`);
+  });
+
+  it('returns a null nextCursor when the page is not full past the limit', async () => {
+    const { svc } = makeHistoryService([p2pIn]);
+    const { nextCursor } = await svc.history('acc-a', 1);
+    expect(nextCursor).toBeNull();
+  });
+
+  it('rejects a malformed cursor with VALIDATION_ERROR', async () => {
+    const { svc } = makeHistoryService([]);
+    await expect(svc.history('acc-a', 25, 'not-a-cursor')).rejects.toMatchObject({ code: 'VALIDATION_ERROR', status: 400 });
+  });
+});
