@@ -90,6 +90,17 @@ describe('TransfersService.createTransfer', () => {
     expect(d.blnk.createTransaction).toHaveBeenCalled();
   });
 
+  it.each([['empty', ''], ['whitespace-only', '   ']])(
+    'falls back to a generated Blnk description when narration is %s',
+    async (_label, narration) => {
+      const { svc, d } = makeService();
+      await svc.createTransfer({ ...dto, narration });
+      expect(d.blnk.createTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ description: expect.stringMatching(/^P2P /) }),
+      );
+    },
+  );
+
   it('a REJECTED status in a 2xx Blnk response also maps to INSUFFICIENT_FUNDS', async () => {
     const { svc, d } = makeService();
     d.blnk.createTransaction.mockResolvedValue({ transaction_id: 'txn_1', status: 'REJECTED', reference: 'tr-1' });
