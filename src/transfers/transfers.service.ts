@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Brackets, In, Repository } from 'typeorm';
 import { Transfer, TransferStatus } from './transfer.entity';
 import { Account } from '../accounts/account.entity';
 import { Customer } from '../customers/customer.entity';
@@ -9,7 +9,7 @@ import { BlnkTransaction } from '../blnk/blnk.types';
 import { LimitsService } from './limits.service';
 import { InternalAccountsService } from '../ledger/internal-accounts.service';
 import { AppError } from '../common/errors';
-import { CreateDepositDto, CreateTransferDto, TransferDto, toTransferDto } from './transfers.dto';
+import { CreateDepositDto, CreateTransferDto, HistoryItemDto, TransferDto, toTransferDto } from './transfers.dto';
 
 interface ExecuteOptions {
   source: string;
@@ -20,6 +20,8 @@ interface ExecuteOptions {
 
 @Injectable()
 export class TransfersService {
+  private static readonly RESYNC_FAIL_AFTER_MS = 60_000;
+
   constructor(
     @InjectRepository(Transfer)
     private readonly repo: Repository<Transfer>,
@@ -93,6 +95,64 @@ export class TransfersService {
     });
   }
 
+  async commit(id: string): Promise<TransferDto> {
+    return this.finalizeInflight(id, 'commit', 'COMMITTED');
+  }
+
+  async void_(id: string): Promise<TransferDto> {
+    return this.finalizeInflight(id, 'void', 'VOIDED');
+  }
+
+  async getById(id: string): Promise<TransferDto> {
+    let transfer = await this.repo.findOneBy({ id });
+    if (!transfer) throw new AppError('TRANSFER_NOT_FOUND', 'Transfer not found', 404, { id });
+    if (transfer.status === 'PENDING') transfer = await this.resync(transfer);
+    return toTransferDto(transfer);
+  }
+
+  async history(accountId: string, limit: number, cursor?: string): Promise<{ items: HistoryItemDto[]; nextCursor: string | null }> {
+    const qb = this.repo
+      .createQueryBuilder('t')
+      .where(new Brackets((b) => b.where('t.from_account_id = :id', { id: accountId }).orWhere('t.to_account_id = :id', { id: accountId })))
+      .orderBy('t.created_at', 'DESC')
+      .addOrderBy('t.id', 'DESC')
+      .take(limit + 1);
+    if (cursor) {
+      const [createdAt, cid] = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
+      qb.andWhere('(t.created_at, t.id) < (:cAt, :cId)', { cAt: createdAt, cId: cid });
+    }
+    const rows = await qb.getMany();
+    const page = rows.slice(0, limit);
+
+    const counterpartyIds = page
+      .map((t) => (t.toAccountId === accountId ? t.fromAccountId : t.toAccountId))
+      .filter((v): v is string => v !== null);
+    const accounts = counterpartyIds.length ? await this.accountRepo.findBy({ id: In(counterpartyIds) }) : [];
+    const byId = new Map(accounts.map((a) => [a.id, a]));
+
+    const items: HistoryItemDto[] = page.map((t) => {
+      const direction = t.toAccountId === accountId ? 'IN' : 'OUT';
+      const otherId = direction === 'IN' ? t.fromAccountId : t.toAccountId;
+      const other = otherId ? byId.get(otherId) : undefined;
+      return {
+        id: t.id,
+        direction,
+        counterparty: other ? { customerId: other.customerId, accountNumber: other.virtualAccountNumber } : null,
+        amount: t.amount,
+        currency: t.currency,
+        status: t.status,
+        narration: t.narration,
+        createdAt: t.createdAt,
+      };
+    });
+
+    const nextCursor =
+      rows.length > limit && page.length > 0
+        ? Buffer.from(`${page[page.length - 1].createdAt.toISOString()}|${page[page.length - 1].id}`).toString('base64url')
+        : null;
+    return { items, nextCursor };
+  }
+
   /** Shared Blnk execution with checkpointed outcome handling. */
   private async execute(transfer: Transfer, opts: ExecuteOptions): Promise<TransferDto> {
     let tx: BlnkTransaction;
@@ -145,6 +205,31 @@ export class TransfersService {
         transferId: transfer.id,
       });
     }
+  }
+
+  private async finalizeInflight(id: string, action: 'commit' | 'void', target: TransferStatus): Promise<TransferDto> {
+    const transfer = await this.repo.findOneBy({ id });
+    if (!transfer) throw new AppError('TRANSFER_NOT_FOUND', 'Transfer not found', 404, { id });
+    if (transfer.status !== 'INFLIGHT' || !transfer.blnkTransactionId) {
+      throw new AppError('INVALID_TRANSFER_STATE', `Transfer is ${transfer.status}, expected INFLIGHT`, 409, { id, status: transfer.status });
+    }
+    await this.blnk.updateInflight(transfer.blnkTransactionId, action);
+    transfer.status = target;
+    return toTransferDto(await this.repo.save(transfer));
+  }
+
+  private async resync(transfer: Transfer): Promise<Transfer> {
+    const tx = await this.blnk.getTransactionByReference(transfer.id);
+    if (tx) {
+      transfer.blnkTransactionId = tx.transaction_id;
+      transfer.status = mapBlnkStatus(tx.status);
+      return this.repo.save(transfer);
+    }
+    if (Date.now() - transfer.createdAt.getTime() > TransfersService.RESYNC_FAIL_AFTER_MS) {
+      transfer.status = 'FAILED';
+      return this.repo.save(transfer);
+    }
+    return transfer; // too fresh to declare failed
   }
 
   private async resolveActiveAccount(id: string | undefined, van: string | undefined, side: 'from' | 'to'): Promise<Account> {
